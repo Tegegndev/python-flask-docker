@@ -132,6 +132,10 @@
         }
 
         async function pollPaymentStatus(checkUrl, refId) {
+            // Ensure checkUrl uses https
+            if (checkUrl.startsWith('http://')) {
+                checkUrl = checkUrl.replace('http://', 'https://');
+            }
             let attempts = 0;
             const maxAttempts = 30; // ~60 seconds
             while (attempts < maxAttempts) {
