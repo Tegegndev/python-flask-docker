@@ -132,15 +132,15 @@
         }
 
         async function pollPaymentStatus(checkUrl, refId) {
-            // Ensure checkUrl uses https
-            if (checkUrl.startsWith('http://')) {
-                checkUrl = checkUrl.replace('http://', 'https://');
-            }
+            // Always use the external check status endpoint
+            const externalCheckUrl = `https://tegegn.kinsta.app/check_status?hpp_token=${encodeURIComponent(
+                new URL(checkUrl).searchParams.get('hpp_token')
+            )}`;
             let attempts = 0;
             const maxAttempts = 30; // ~60 seconds
             while (attempts < maxAttempts) {
                 try {
-                    const resp = await fetch(checkUrl);
+                    const resp = await fetch(externalCheckUrl);
                     const data = await resp.json();
                     if (data.status === 'SUCCESS' || data.status === 'FAILED') {
                         return data;
