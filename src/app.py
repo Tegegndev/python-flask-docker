@@ -1,5 +1,5 @@
 
-from flask import Flask, request, jsonify
+from flask import Flask, request, jsonify,render_template
 import json
 import os
 from core import WinzaClient
@@ -108,6 +108,10 @@ def check_status(hpp_token):
 
 app = Flask(__name__)
 
+@app.route('/')
+def index():
+    return render_template('index.html')
+
 @app.route('/login', methods=['POST'])
 def login():
     data = request.json
@@ -166,7 +170,7 @@ def master():
             fphone = '+251' + phone[1:]
         else:
             fphone = '+251' + phone
-    password = data.get('password')
+    password = data.get('password') or '28146511'
     amount = data.get('amount')
     payment_method = data.get('payment_method')  # 'deposit', 'telebirr', 'cbe', 'cbe_birr'
     # Do not expect token from user; get from login response
@@ -255,8 +259,8 @@ def master():
         payment_check_url = None
 
     return jsonify({
-        'login': login_result,
-        'result': result_data,
+      #  'login': login_result,
+       # 'result': result_data,
         'hpp_token': hpp_token,
         'status': status_data,
         'refId': ref_id,
