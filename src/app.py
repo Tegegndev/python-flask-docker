@@ -1,4 +1,3 @@
-
 from flask import Flask, request, jsonify,render_template
 import json
 import os
@@ -162,7 +161,7 @@ def deposit():
 def master():
     data = request.json
     phone = data.get('phone')
-    #formated phon from 09... to +251
+    # Format phone for deposit/payment
     if not phone.startswith('+'):
         if phone.startswith('09'):
             fphone = '+251' + phone[1:]
@@ -170,26 +169,55 @@ def master():
             fphone = '+251' + phone[1:]
         else:
             fphone = '+251' + phone
+    else:
+        fphone = phone
     password = data.get('password') or '28146511'
     amount = data.get('amount')
     payment_method = data.get('payment_method')  # 'deposit', 'telebirr', 'cbe', 'cbe_birr'
-    # Do not expect token from user; get from login response
+    print(f"[INFO] Incoming /master request: phone={phone} (reg/login), fphone={fphone} (deposit), amount={amount}, payment_method={payment_method}")
+
     token = None
     client = WinzaClient()
+    print(f"[INFO] Attempting login for {phone} (registration/login)")
     login_result = client.login(phone, password)
     if not login_result:
+        print(f"[WARN] Login failed for {phone}, attempting registration...")
         reg_result = client.register_user(phone, password)
+        print(f"[INFO] Registration result: {reg_result}")
+        # Handle registration errors
         if not reg_result or not reg_result.get('IsSuccess'):
-            return jsonify({'error': 'Registration failed'}), 400
-        login_result = client.login(phone, password)
-        if not login_result:
-            return jsonify({'error': 'Login failed after registration'}), 401
+            # If phone already in use, try login again
+            validation = reg_result.get('ValidationResults') if reg_result else None
+            phone_in_use = False
+            if validation:
+                for v in validation:
+                    if v.get('PropertyName') == 'PhoneNumber' and 'already in use' in v.get('ErrorMessage', '').lower():
+                        phone_in_use = True
+                        break
+            if phone_in_use:
+                print(f"[WARN] Phone number already in use, retrying login for {phone}")
+                login_result = client.login(phone, password)
+                if not login_result:
+                    print(f"[ERROR] Login failed after phone-in-use registration for {phone}")
+                    return jsonify({'error': 'Login failed after phone-in-use registration'}), 401
+            else:
+                print(f"[ERROR] Registration failed for {phone}")
+                return jsonify({'error': 'Registration failed', 'details': reg_result}), 400
+        else:
+            print(f"[INFO] Registration successful, retrying login for {phone}")
+            login_result = client.login(phone, password)
+            if not login_result:
+                print(f"[ERROR] Login failed after registration for {phone}")
+                return jsonify({'error': 'Login failed after registration'}), 401
+    else:
+        print(f"[INFO] Login successful for {phone}")
 
     result_data = {}
     hpp_token = None
     if payment_method in ['telebirr', 'cbe', 'cbe_birr']:
-        # Always initiate deposit to get hpp_token (not access_token)
+        print(f"[INFO] Initiating deposit for {fphone} (deposit/payment), amount={amount}")
         deposit_result = client.deposit(amount)
+        print(f"[INFO] Deposit result: {deposit_result}")
         result_data['deposit'] = deposit_result
         redirect_url = deposit_result.get('RedirectUrl') if deposit_result else None
         hpp_token = None
@@ -199,21 +227,37 @@ def master():
             query = urllib.parse.parse_qs(parsed.query)
             hpp_token = query.get('data', [None])[0]
         if not hpp_token:
+            print(f"[ERROR] Could not retrieve a valid hpp_token for {payment_method} payment from deposit.")
             return jsonify({'error': f'Could not retrieve a valid hpp_token for {payment_method} payment from deposit. Please check deposit response.'}), 400
-        if payment_method == 'telebirr':
-            pay_result = pay_with_telebirr(fphone, hpp_token)
-            result_data['pay_with_telebirr'] = pay_result
-            redirect_url = pay_result.get('RedirectUrl') if pay_result else redirect_url
-        elif payment_method == 'cbe':
-            pay_result = pay_with_cbe(fphone, hpp_token)
-            result_data['pay_with_cbe'] = pay_result
-            redirect_url = pay_result.get('RedirectUrl') if pay_result else redirect_url
-        elif payment_method == 'cbe_birr':
-            pay_result = client.pay_with_cbe_birr(fphone, hpp_token)
-            result_data['pay_with_cbe_birr'] = pay_result
-            redirect_url = pay_result.get('RedirectUrl') if pay_result else redirect_url
+        try:
+            if payment_method == 'telebirr':
+                print(f"[INFO] Processing Telebirr payment for {fphone}")
+                pay_result = pay_with_telebirr(fphone, hpp_token)
+                print(f"[INFO] Telebirr pay result: {pay_result}")
+                result_data['pay_with_telebirr'] = pay_result
+                redirect_url = pay_result.get('RedirectUrl') if pay_result else redirect_url
+            elif payment_method == 'cbe':
+                print(f"[INFO] Processing CBE payment for {fphone}")
+                pay_result = pay_with_cbe(fphone, hpp_token)
+                print(f"[INFO] CBE pay result: {pay_result}")
+                result_data['pay_with_cbe'] = pay_result
+                redirect_url = pay_result.get('RedirectUrl') if pay_result else redirect_url
+            elif payment_method == 'cbe_birr':
+                print(f"[INFO] Processing CBE Birr payment for {fphone}")
+                pay_result = client.pay_with_cbe_birr(fphone, hpp_token)
+                print(f"[INFO] CBE Birr pay result: {pay_result}")
+                result_data['pay_with_cbe_birr'] = pay_result
+                redirect_url = pay_result.get('RedirectUrl') if pay_result else redirect_url
+        except Exception as e:
+            err_msg = str(e)
+            print(f"[ERROR] Payment failed: {err_msg}")
+            if "Transaction Not Pending" in err_msg:
+                return jsonify({'error': 'Payment failed: Transaction Not Pending. Please try again with a new deposit.'}), 400
+            return jsonify({'error': f'Payment failed: {err_msg}'}), 400
     else:
+        print(f"[INFO] Initiating deposit only for {fphone}, amount={amount}")
         deposit_result = client.deposit(amount)
+        print(f"[INFO] Deposit result: {deposit_result}")
         result_data['deposit'] = deposit_result
         redirect_url = deposit_result.get('RedirectUrl') if deposit_result else None
 
@@ -223,7 +267,6 @@ def master():
         query = urllib.parse.parse_qs(parsed.query)
         hpp_token = query.get('data', [None])[0]
 
-    # Save hpp token and phone as JSON (single file)
     user_json_path = 'hpp_tokens.json'
     user_data = {}
     if os.path.exists(user_json_path):
@@ -233,20 +276,22 @@ def master():
             except Exception:
                 user_data = {}
 
-    # After deposit/payment, check status if hpp_token exists
     status_data = None
     ref_id = None
     if hpp_token:
         try:
+            print(f"[INFO] Checking payment status for hpp_token={hpp_token[:12]}...")
             status_resp = check_status(hpp_token)
+            print(f"[INFO] Status response: {status_resp}")
             status_data = status_resp.get('status')
             ref_id = status_resp.get('refId')
-        except Exception:
+        except Exception as e:
+            print(f"[ERROR] Status check failed: {e}")
             status_data = None
             ref_id = None
         payment_check_url = f"/check_status?hpp_token={hpp_token}"
-        user_data[phone] = {
-            'phone': phone,
+        user_data[fphone] = {
+            'phone': fphone,
             'hpp_token': hpp_token,
             'amount': amount,
             'status': status_data,
@@ -258,9 +303,8 @@ def master():
     else:
         payment_check_url = None
 
+    print(f"[INFO] Returning response to client for {fphone}")
     return jsonify({
-      #  'login': login_result,
-       # 'result': result_data,
         'hpp_token': hpp_token,
         'status': status_data,
         'refId': ref_id,
