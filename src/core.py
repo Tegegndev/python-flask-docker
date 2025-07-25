@@ -243,3 +243,15 @@ class WinzaClient:
             return response.json()
         else:
             return None
+
+
+if __name__ == '__main__':
+    client = WinzaClient()
+    #login 
+    phone = '0987624298'
+    password = '28146511'
+    login_response = client.login(phone, password)
+    if login_response:
+        print("Login successful:", login_response)
+    else:
+        print("Login failed")

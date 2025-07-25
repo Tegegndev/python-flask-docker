@@ -107,6 +107,10 @@ def check_status(hpp_token):
 
 app = Flask(__name__)
 
+# Allow CORS from all sources
+from flask_cors import CORS
+CORS(app)
+
 @app.route('/')
 def index():
     return render_template('index.html')
@@ -309,6 +313,7 @@ def master():
         'status': status_data,
         'refId': ref_id,
         'amount': amount,
+        'result': result_data,
         'payment_check_url': request.host_url.rstrip('/') + payment_check_url if payment_check_url else None
     })
 

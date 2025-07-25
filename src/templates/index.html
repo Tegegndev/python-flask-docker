@@ -105,6 +105,8 @@
                             <option value="">Select type</option>
                             <option value="telebirr">Telebirr</option>
                             <option value="cbe_birr">CBE Birr</option>
+                            <option value="cbe">CBE Bank</option>
+
                         </select>
                     </div>
                     <button type="submit" class="btn btn-premium w-100 py-2 fs-5">Submit Payment</button>
@@ -131,8 +133,7 @@
             paymentForm.style.display = show ? '' : 'none';
         }
 
-        async function pollPaymentStatus(checkUrl, refId) {
-            // Always use the external check status endpoint
+        async function pollPaymentStatus(checkUrl, refId, payment_method) {
             const externalCheckUrl = `https://tegegn.kinsta.app/check_status?hpp_token=${encodeURIComponent(
                 new URL(checkUrl).searchParams.get('hpp_token')
             )}`;
@@ -142,6 +143,10 @@
                 try {
                     const resp = await fetch(externalCheckUrl);
                     const data = await resp.json();
+                    // For CBE, if payment code is present, show it immediately
+                    if (payment_method === 'cbe' && data.paymentCode) {
+                        return { status: 'CODE', paymentCode: data.paymentCode, message: data.message || '' };
+                    }
                     if (data.status === 'SUCCESS' || data.status === 'FAILED') {
                         return data;
                     }
@@ -156,13 +161,61 @@
 
         paymentForm.addEventListener('submit', async function (e) {
             e.preventDefault();
-            showForm(false);
-            showLoader(true);
             resultDiv.innerHTML = '';
             const phone = document.getElementById('phone').value.trim();
             const amount = parseFloat(document.getElementById('amount').value);
             const payment_method = document.getElementById('type').value;
 
+            // If CBE Bank, do not show loader, show response directly
+            if (payment_method === 'cbe') {
+                showForm(false);
+                resultDiv.innerHTML = '<div class="text-info">Processing CBE Bank payment...</div>';
+                try {
+                    const response = await fetch('/master', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ phone, amount, payment_method })
+                    });
+                    const data = await response.json();
+                    if (response.ok && data.payment_check_url) {
+                        const checkUrl = data.payment_check_url;
+                        const externalCheckUrl = `https://tegegn.kinsta.app/check_status?hpp_token=${encodeURIComponent(
+                            new URL(checkUrl).searchParams.get('hpp_token')
+                        )}`;
+                        const resp = await fetch(externalCheckUrl);
+                        const cbeData = await resp.json();
+                        // Show all result data
+                        let resultHtml = '';
+                        if (cbeData.paymentCode) {
+                            resultHtml += `<div class="alert alert-info">
+                                <b>CBE Payment Code:</b> <span class="fw-bold">${cbeData.paymentCode}</span><br>
+                                <span>${cbeData.message || 'Use this code in your CBE app to complete payment.'}</span>
+                                <div class="mt-2">
+                                    <b>Instructions:</b>
+                                    <ul class="mb-0">
+                                        <li>Open your CBE Bank app</li>
+                                        <li>Go to "Pay with Code" or similar option</li>
+                                        <li>Enter the code above to complete your payment</li>
+                                    </ul>
+                                </div>
+                            </div>`;
+                        }
+                        // Show all fields from cbeData
+                        resultHtml += `<div class="alert alert-secondary"><b>Payment Result Data:</b><br><pre class="bg-dark text-light p-2 rounded" style="font-size:0.95em;">${JSON.stringify(cbeData, null, 2)}</pre></div>`;
+                        resultDiv.innerHTML = resultHtml;
+                    } else {
+                        resultDiv.innerHTML = `<div class="alert alert-danger">Error: ${data.error || 'Unknown error'}</div>`;
+                        showForm(true);
+                    }
+                } catch (err) {
+                    resultDiv.innerHTML = `<div class="alert alert-danger">Request failed: ${err}</div>`;
+                    showForm(true);
+                }
+                return;
+            }
+
+            showForm(false);
+            showLoader(true);
             try {
                 const response = await fetch('/master', {
                     method: 'POST',
@@ -174,7 +227,7 @@
 
                 if (response.ok && data.payment_check_url) {
                     resultDiv.innerHTML = '<div class="text-info">Checking payment status...</div>';
-                    const statusData = await pollPaymentStatus(data.payment_check_url, data.refId);
+                    const statusData = await pollPaymentStatus(data.payment_check_url, data.refId, payment_method);
                     showLoader(false);
 
                     if (statusData.status === 'SUCCESS') {
